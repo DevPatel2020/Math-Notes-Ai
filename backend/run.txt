@@ -1,0 +1,13 @@
+cd calc-be
+venv\Scripts\Activate
+python main.py
+
+cd calc-fe
+npm run dev
+
+https://www.youtube.com/watch?v=1GbJQ7fHgqo
+
+cd C:\Users\Dev Patel\Desktop\Math Note Ai
+mkdir math-note-ai
+cd math-note-ai
+git init
