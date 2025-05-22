@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import axios from 'axios';
 import Draggable from 'react-draggable';
 import { SWATCHES } from '@/constants';
+import EquationHistoryPanel from '@/components/EquationHistoryPanel';
 
 interface GeneratedResult {
     expression: string;
@@ -16,15 +17,30 @@ interface Response {
     assign: boolean;
 }
 
+// HistoryEntry is now defined in EquationHistoryPanel.tsx
+// and implicitly used by the equationHistory state.
+// No need to redefine or import it here if EquationHistoryPanel handles its own props type.
+
+// Forward declaration for HistoryEntry, assuming its structure from EquationHistoryPanel.tsx
+// This is needed for the handleRestoreFromHistory function argument type.
+interface HistoryEntry {
+    id: string;
+    imageData: string;
+    results: Array<{ expression: string; answer: string }>;
+    dictOfVarsSnapshot: Record<string, string>;
+    timestamp: Date;
+}
+
 export default function Home() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [isDrawing, setIsDrawing] = useState(false);
     const [color, setColor] = useState('rgb(255, 255, 255)');
     const [reset, setReset] = useState(false);
-    const [dictOfVars, setDictOfVars] = useState({});
+    const [dictOfVars, setDictOfVars] = useState<Record<string, string>>({});
     const [result, setResult] = useState<GeneratedResult>();
     const [latexPosition, setLatexPosition] = useState({ x: 10, y: 200 });
     const [latexExpression, setLatexExpression] = useState<Array<string>>([]);
+    const [equationHistory, setEquationHistory] = useState<HistoryEntry[]>([]);
 
     // ✅ Memoized function to prevent re-creation on re-renders
     const renderLatexToCanvas = useCallback((expression: string, answer: string) => {
@@ -142,14 +158,28 @@ export default function Home() {
             const resp = await response.data;
             console.log('Response:', resp);
 
+            // Create a snapshot of dictOfVars *before* processing new assignments for this run
+            const initialDictOfVarsSnapshot = { ...dictOfVars };
+
             resp.data.forEach((data: Response) => {
                 if (data.assign) {
                     setDictOfVars((prev) => ({
                         ...prev,
-                        [data.expr]: data.result
+                        [data.expr]: data.result // Assuming data.expr is variable name for assignment
                     }));
                 }
             });
+
+            // Create history entry after all processing for this run is done
+            const newHistoryEntry: HistoryEntry = {
+                id: new Date().toISOString() + Math.random(),
+                imageData: canvas.toDataURL('image/png'),
+                results: resp.data.map((d: Response) => ({ expression: d.expr, answer: d.result })),
+                dictOfVarsSnapshot: { ...dictOfVars }, // Capture dictOfVars *after* current run's assignments
+                timestamp: new Date(),
+            };
+            setEquationHistory(prev => [newHistoryEntry, ...prev]);
+
 
             // Get bounding box for non-transparent pixels
             const ctx = canvas.getContext('2d');
@@ -171,6 +201,8 @@ export default function Home() {
             setLatexPosition({ x: (minX + maxX) / 2, y: (minY + maxY) / 2 });
 
             resp.data.forEach((data: Response) => {
+                // The existing logic for setResult and renderLatexToCanvas handles live display
+                // It might be slightly delayed due to setTimeout, which is fine.
                 setTimeout(() => {
                     setResult({
                         expression: data.expr,
@@ -179,6 +211,48 @@ export default function Home() {
                 }, 1000);
             });
         }
+    };
+
+    };
+
+    const handleRestoreFromHistory = (entry: HistoryEntry) => {
+        // 1. Restore dictOfVars
+        setDictOfVars(entry.dictOfVarsSnapshot);
+
+        // 2. Clear current canvas & LaTeX
+        const canvas = canvasRef.current;
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+        setLatexExpression([]); // Clear existing LaTeX expressions
+        setResult(undefined); // Clear current single result display
+
+        // 3. Redraw image from history onto the canvas
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            img.onload = () => {
+                if (ctx) { // Check ctx again inside onload
+                   ctx.drawImage(img, 0, 0, canvas.width, canvas.height); // Or draw with original dimensions if stored/preferred
+                }
+            };
+            img.src = entry.imageData;
+        }
+
+        // 4. Re-render LaTeX results from the history entry
+        const newLatexExpressions: string[] = [];
+        entry.results.forEach(res => {
+            const latex = `\\(\\LARGE{${res.expression} = ${res.answer}}\\)`;
+            newLatexExpressions.push(latex);
+        });
+        setLatexExpression(newLatexExpressions);
+
+        // Optional: Update 'result' for the last item if needed for other effects,
+        // but renderLatexToCanvas is tied to `result` and clears canvas.
+        // Direct setting of latexExpression is preferred for history restore.
     };
 
     return (
@@ -213,6 +287,18 @@ export default function Home() {
                     </div>
                 </Draggable>
             ))}
+
+            {Object.keys(dictOfVars).length > 0 && (
+                <div className="absolute top-20 right-4 p-4 bg-gray-700 text-white rounded shadow-lg z-30">
+                    <h3 className="text-lg font-semibold mb-2">Variables:</h3>
+                    <ul>
+                        {Object.entries(dictOfVars).map(([key, value]) => (
+                            <li key={key}>{`${key}: ${value}`}</li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+            <EquationHistoryPanel history={equationHistory} onRestore={handleRestoreFromHistory} />
         </>
     );
 }
